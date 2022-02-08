@@ -50,26 +50,9 @@ func NewHTTPClient(o Options) (*HttpClient, error) {
 	}, nil
 }
 
-// Request responsible for sending http request
-// by using the Option set at the time of initialization.
-func (h *HttpClient) Request(ctx context.Context, method, url string, headers map[string]string,
-	request io.Reader) (*http.Response, error) {
-	rBody, err := http.NewRequestWithContext(ctx, method, url, request)
-	if err != nil {
-		return nil, err
-	}
-
-	for key, val := range headers {
-		rBody.Header[key] = []string{val}
-	}
-
-	response, err := h.client.Do(rBody)
-	if err != nil {
-		return nil, err
-	}
-
+func (h *HttpClient) successLogging(method, url, status string, statusCode int, headers, request, response interface{}) {
 	if h.reqResLogging {
-		lStr := fmt.Sprintf("HttpClient | %s | %s | %d | %s", method, url, response.StatusCode, response.Status)
+		lStr := fmt.Sprintf("HttpClient | %s | %s | %d | %s", method, url, statusCode, status)
 		if h.reqResBodyLogging {
 			reqResLogger := []zapcore.Field{
 				{
@@ -80,7 +63,12 @@ func (h *HttpClient) Request(ctx context.Context, method, url string, headers ma
 				{
 					Key:       "response",
 					Type:      zapcore.ReflectType,
-					Interface: response.Body,
+					Interface: response,
+				},
+				{
+					Key:       "headers",
+					Type:      zapcore.ReflectType,
+					Interface: headers,
 				},
 			}
 			logger.Info(lStr, reqResLogger...)
@@ -88,6 +76,55 @@ func (h *HttpClient) Request(ctx context.Context, method, url string, headers ma
 			logger.Info(lStr)
 		}
 	}
+}
+
+func (h *HttpClient) errorLogging(method, url string, request, headers interface{}, err error) {
+	lStr := fmt.Sprintf("HttpClient | %s | %s | %d | %s", method, url, http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError))
+	reqResLogger := []zapcore.Field{
+		{
+			Key:    "error",
+			Type:   zapcore.StringType,
+			String: err.Error(),
+		},
+	}
+	if h.reqResBodyLogging {
+		reqResLogger = append(reqResLogger, zapcore.Field{
+			Key:       "request",
+			Type:      zapcore.ReflectType,
+			Interface: request,
+		}, zapcore.Field{
+			Key:       "headers",
+			Type:      zapcore.ReflectType,
+			Interface: headers,
+		})
+		logger.Error(lStr, reqResLogger...)
+	} else {
+		logger.Error(lStr)
+	}
+}
+
+// Request responsible for sending http request
+// by using the Option set at the time of initialization.
+func (h *HttpClient) Request(ctx context.Context, method, url string, headers map[string]string,
+	request io.Reader) (*http.Response, error) {
+	rBody, err := http.NewRequestWithContext(ctx, method, url, request)
+	if err != nil {
+		h.errorLogging(method, url, request, headers, err)
+		return nil, err
+	}
+
+	for key, val := range headers {
+		rBody.Header[key] = []string{val}
+	}
+
+	response, err := h.client.Do(rBody)
+	if err != nil {
+		h.errorLogging(method, url, request, headers, err)
+		return nil, err
+	}
+
+	h.successLogging(method, url, response.Status, response.StatusCode, headers, request, response.Body)
+
 	return response, nil
 }
 
