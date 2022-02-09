@@ -42,8 +42,8 @@ func NewHTTPClient(o Options) (*HttpClient, error) {
 
 	return &HttpClient{
 		client: &http.Client{
-			Timeout: o.Timeout,
-			// Transport: transport,
+			Timeout:   o.Timeout,
+			Transport: transport,
 		},
 		reqResLogging:     o.LogReqResEnable,
 		reqResBodyLogging: o.LogReqResBodyEnable,
