@@ -3,13 +3,14 @@ package httpclient
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/rohanraj7316/logger"
-	"go.uber.org/zap/zapcore"
 )
 
 type HttpClient struct {
@@ -18,7 +19,9 @@ type HttpClient struct {
 	reqResBodyLogging bool
 }
 
-func NewHTTPClient(o Options) (*HttpClient, error) {
+func New(config ...Config) (*HttpClient, error) {
+	cfg := configDefault(config...)
+
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
@@ -26,8 +29,8 @@ func NewHTTPClient(o Options) (*HttpClient, error) {
 	}
 
 	// setting up proxy
-	if o.UseProxy {
-		pProxyURL, err := url.Parse(o.ProxyURL)
+	if cfg.UseProxy {
+		pProxyURL, err := url.Parse(cfg.ProxyURL)
 		if err != nil {
 			return nil, err
 		}
@@ -35,81 +38,117 @@ func NewHTTPClient(o Options) (*HttpClient, error) {
 		transport.Proxy = http.ProxyURL(pProxyURL)
 	}
 
-	err := logger.Configure(o.LoggerOptions)
+	err := logger.Configure()
 	if err != nil {
 		return nil, err
 	}
 
 	return &HttpClient{
 		client: &http.Client{
-			Timeout:   o.Timeout,
+			Timeout:   cfg.Timeout,
 			Transport: transport,
 		},
-		reqResLogging:     o.LogReqResEnable,
-		reqResBodyLogging: o.LogReqResBodyEnable,
+		reqResLogging:     cfg.LogReqResEnable,
+		reqResBodyLogging: cfg.LogReqResBodyEnable,
 	}, nil
 }
 
-func (h *HttpClient) successLogging(method, url, status string, statusCode int, headers, request, response interface{}) {
+func (h *HttpClient) successLogging(method, url, status string, statusCode int, response io.ReadCloser,
+	start time.Time, fields ...logger.Field) {
+	l := time.Since(start).Round(time.Millisecond).String()
 	if h.reqResLogging {
-		lStr := fmt.Sprintf("HttpClient | %s | %s | %d | %s", method, url, statusCode, status)
+		lStr := fmt.Sprintf("HttpClient | %s | %s | %d | %s | %s", method, url, statusCode, status, l)
 		if h.reqResBodyLogging {
-			reqResLogger := []zapcore.Field{
-				{
-					Key:       "request",
-					Type:      zapcore.ReflectType,
-					Interface: request,
-				},
-				{
-					Key:       "response",
-					Type:      zapcore.ReflectType,
-					Interface: response,
-				},
-				{
-					Key:       "headers",
-					Type:      zapcore.ReflectType,
-					Interface: headers,
-				},
+			var responseBody map[string]interface{}
+			if response != nil {
+				err := json.NewDecoder(response).Decode(&responseBody)
+				if err != nil {
+					logger.Error(err.Error())
+				}
 			}
-			logger.Info(lStr, reqResLogger...)
+
+			fields = append(fields, []logger.Field{
+				{
+					Key:   "statusCode",
+					Value: statusCode,
+				},
+				{
+					Key:   "response",
+					Value: responseBody,
+				},
+				{
+					Key:   "latency",
+					Value: l,
+				},
+			}...)
+			logger.Info(lStr, fields...)
 		} else {
 			logger.Info(lStr)
 		}
 	}
 }
 
-func (h *HttpClient) errorLogging(method, url string, request, headers interface{}, err error) {
-	lStr := fmt.Sprintf("HttpClient | %s | %s | %d | %s", method, url, http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError))
-	reqResLogger := []zapcore.Field{
+func (h *HttpClient) errorLogging(method, url string, start time.Time, err error, fields ...logger.Field) {
+	l := time.Since(start).Round(time.Millisecond).String()
+	lStr := fmt.Sprintf("HttpClient | %s | %s | %d | %s | %s", method,
+		url, http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError), l)
+	fields = append(fields, []logger.Field{
 		{
-			Key:    "error",
-			Type:   zapcore.StringType,
-			String: err.Error(),
+			Key:   "error",
+			Value: err.Error(),
 		},
-	}
-	if h.reqResBodyLogging {
-		reqResLogger = append(reqResLogger, zapcore.Field{
-			Key:       "request",
-			Type:      zapcore.ReflectType,
-			Interface: request,
-		}, zapcore.Field{
-			Key:       "headers",
-			Type:      zapcore.ReflectType,
-			Interface: headers,
-		})
-		logger.Error(lStr, reqResLogger...)
-	} else {
-		logger.Error(lStr)
-	}
+		{
+			Key:   "latency",
+			Value: l,
+		},
+	}...)
+	logger.Error(lStr, fields...)
 }
 
 // Request responsible for sending http request
 // by using the Option set at the time of initialization.
 func (h *HttpClient) Request(ctx context.Context, method, url string, headers map[string]string,
 	request io.Reader) (*http.Response, error) {
+	start := time.Now()
+	lBody := []logger.Field{
+		{
+			Key:   "requestId",
+			Value: ctx.Value("requestId"),
+		},
+		{
+			Key:   "url",
+			Value: url,
+		},
+		{
+			Key:   "method",
+			Value: method,
+		},
+	}
+
+	if h.reqResBodyLogging {
+		if request != nil {
+			bRequest, err := io.ReadAll(request)
+			if err != nil {
+				logger.Error(err.Error())
+			} else {
+				lBody = append(lBody, logger.Field{
+					Key:   "request",
+					Value: bRequest,
+				})
+			}
+		}
+
+		if headers != nil {
+			lBody = append(lBody, logger.Field{
+				Key:   "headers",
+				Value: headers,
+			})
+		}
+	}
+
 	rBody, err := http.NewRequestWithContext(ctx, method, url, request)
 	if err != nil {
-		h.errorLogging(method, url, request, headers, err)
+		h.errorLogging(method, url, start, err, lBody...)
 		return nil, err
 	}
 
@@ -119,11 +158,11 @@ func (h *HttpClient) Request(ctx context.Context, method, url string, headers ma
 
 	response, err := h.client.Do(rBody)
 	if err != nil {
-		h.errorLogging(method, url, request, headers, err)
+		h.errorLogging(method, url, start, err, lBody...)
 		return nil, err
 	}
 
-	h.successLogging(method, url, response.Status, response.StatusCode, headers, request, response.Body)
+	h.successLogging(method, url, response.Status, response.StatusCode, response.Body, start, lBody...)
 
 	return response, nil
 }
