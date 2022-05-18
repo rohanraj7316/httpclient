@@ -102,7 +102,7 @@ func TestRequestLogging(t *testing.T) {
 		t.Error(err)
 	}
 
-	_, err := c.Request(setCtx(ctx), http.MethodGet, url, nil, nil)
+	_, err = c.Request(setCtx(ctx), http.MethodGet, url, nil, nil)
 	if err != nil {
 		t.Error(err)
 	}

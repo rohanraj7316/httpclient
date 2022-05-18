@@ -148,7 +148,7 @@ func (h *HttpClient) Request(ctx context.Context, method, url string, headers ma
 
 	rBody, err := http.NewRequestWithContext(ctx, method, url, request)
 	if err != nil {
-		h.errorLogging(method, url, start, err, lBody...)
+		go h.errorLogging(method, url, start, err, lBody...)
 		return nil, err
 	}
 
@@ -158,11 +158,11 @@ func (h *HttpClient) Request(ctx context.Context, method, url string, headers ma
 
 	response, err := h.client.Do(rBody)
 	if err != nil {
-		h.errorLogging(method, url, start, err, lBody...)
+		go h.errorLogging(method, url, start, err, lBody...)
 		return nil, err
 	}
 
-	h.successLogging(method, url, response.Status, response.StatusCode, response.Body, start, lBody...)
+	go h.successLogging(method, url, response.Status, response.StatusCode, response.Body, start, lBody...)
 
 	return response, nil
 }
