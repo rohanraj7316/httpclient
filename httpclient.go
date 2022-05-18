@@ -59,7 +59,7 @@ func (h *HttpClient) successLogging(method, url, status string, statusCode int, 
 	if h.reqResLogging {
 		lStr := fmt.Sprintf("HttpClient | %s | %s | %d | %s | %s", method, url, statusCode, status, l)
 		if h.reqResBodyLogging {
-			var responseBody map[string]interface{}
+			var responseBody interface{}
 			if response != nil {
 				err := json.NewDecoder(response).Decode(&responseBody)
 				if err != nil {
