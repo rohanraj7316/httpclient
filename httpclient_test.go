@@ -92,3 +92,18 @@ func TestFlags(t *testing.T) {
 		})
 	}
 }
+
+func TestRequestLogging(t *testing.T) {
+	ctx := context.Background()
+	url := "https://jsonplaceholder.typicode.com/posts"
+
+	c, err := New()
+	if err != nil {
+		t.Error(err)
+	}
+
+	_, err := c.Request(setCtx(ctx), http.MethodGet, url, nil, nil)
+	if err != nil {
+		t.Error(err)
+	}
+}
