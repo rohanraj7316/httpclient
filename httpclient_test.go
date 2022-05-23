@@ -1,7 +1,9 @@
 package httpclient
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,7 +17,7 @@ func setCtx(pCtx context.Context) context.Context {
 	return context.WithValue(pCtx, "requestId", nId)
 }
 
-func TestHttpMethods(t *testing.T) {
+func TestHttpGetMethod(t *testing.T) {
 	ctx := context.Background()
 
 	// add your test case here
@@ -86,7 +88,7 @@ func TestFlags(t *testing.T) {
 				"T-ID": "123123",
 			}
 			_, err = c.Request(setCtx(ctx), http.MethodGet, url, headers, nil)
-			if err != nil {
+			if err == nil {
 				t.Error(err)
 			}
 		})
@@ -103,6 +105,45 @@ func TestRequestLogging(t *testing.T) {
 	}
 
 	_, err = c.Request(setCtx(ctx), http.MethodGet, url, nil, nil)
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+func TestHttpPostMethod(t *testing.T) {
+	ctx := context.Background()
+
+	test := struct {
+		ctx      context.Context
+		url      string
+		method   string
+		headers  map[string]string
+		request  map[string]string
+		response map[string]interface{}
+	}{
+		ctx:    setCtx(ctx),
+		url:    "https://jsonplaceholder.typicode.com/posts",
+		method: http.MethodPost,
+		headers: map[string]string{
+			"Content-Type": "application/json",
+		},
+		request: map[string]string{
+			"title":  "this is testing title",
+			"body":   "this is testing body",
+			"userId": "2",
+		},
+		response: map[string]interface{}{
+			"status": 201,
+		},
+	}
+
+	rByte, err := json.Marshal(test.request)
+	if err != nil {
+		t.Errorf("error in parsing request: %s", err)
+	}
+
+	c, _ := New()
+	_, err = c.Request(test.ctx, test.method, test.url, test.headers, bytes.NewReader(rByte))
 	if err != nil {
 		t.Error(err)
 	}
