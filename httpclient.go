@@ -1,6 +1,7 @@
 package httpclient
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -53,45 +54,77 @@ func New(config ...Config) (*HttpClient, error) {
 	}, nil
 }
 
-func (h *HttpClient) successLogging(method, url, status string, statusCode int, response io.ReadCloser,
+func (h *HttpClient) errStr(msg string, err error) string {
+	return fmt.Sprintf("[HttpClient] %s: %s", msg, err.Error())
+}
+
+func (h *HttpClient) successLogging(method, url string, request *bytes.Buffer, status string, statusCode int, response io.ReadCloser,
 	start time.Time, fields ...logger.Field) {
 	l := time.Since(start).Round(time.Millisecond).String()
 	if h.reqResLogging {
 		lStr := fmt.Sprintf("HttpClient | %s | %s | %d | %s | %s", method, url, statusCode, status, l)
+		fields := append(fields, []logger.Field{
+			{
+				Key:   "statusCode",
+				Value: statusCode,
+			},
+			{
+				Key:   "latency",
+				Value: l,
+			},
+		}...)
+
 		if h.reqResBodyLogging {
-			var responseBody interface{}
+			var resBody interface{}
 			if response != nil {
-				err := json.NewDecoder(response).Decode(&responseBody)
+				err := json.NewDecoder(response).Decode(&resBody)
 				if err != nil {
-					logger.Error(err.Error())
+					fmt.Println(resBody)
+					logger.Error(h.errStr("failed to parse response", err))
 				}
+			}
+
+			var reqByte []byte
+			if request != nil {
+				rByte, err := io.ReadAll(request)
+				if err != nil {
+					logger.Error(h.errStr("failed to parse request", err))
+				}
+				reqByte = rByte
 			}
 
 			fields = append(fields, []logger.Field{
 				{
-					Key:   "statusCode",
-					Value: statusCode,
-				},
-				{
 					Key:   "response",
-					Value: responseBody,
+					Value: resBody,
 				},
 				{
-					Key:   "latency",
-					Value: l,
+					Key:   "request",
+					Value: reqByte,
 				},
 			}...)
 			logger.Info(lStr, fields...)
 		} else {
-			logger.Info(lStr)
+			logger.Info(lStr, fields...)
 		}
 	}
 }
 
-func (h *HttpClient) errorLogging(method, url string, start time.Time, err error, fields ...logger.Field) {
+func (h *HttpClient) errorLogging(method, url string, request io.Reader, start time.Time, err error, fields ...logger.Field) {
+
 	l := time.Since(start).Round(time.Millisecond).String()
 	lStr := fmt.Sprintf("HttpClient | %s | %s | %d | %s | %s", method,
 		url, http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError), l)
+
+	var reqByte []byte
+	if request != nil {
+		rByte, err := io.ReadAll(request)
+		if err != nil {
+			logger.Error(h.errStr("failed to parse request", err))
+		}
+		reqByte = rByte
+	}
+
 	fields = append(fields, []logger.Field{
 		{
 			Key:   "error",
@@ -101,7 +134,12 @@ func (h *HttpClient) errorLogging(method, url string, start time.Time, err error
 			Key:   "latency",
 			Value: l,
 		},
+		{
+			Key:   "request",
+			Value: reqByte,
+		},
 	}...)
+
 	logger.Error(lStr, fields...)
 }
 
@@ -109,6 +147,9 @@ func (h *HttpClient) errorLogging(method, url string, start time.Time, err error
 // by using the Option set at the time of initialization.
 func (h *HttpClient) Request(ctx context.Context, method, url string, headers map[string]string,
 	request io.Reader) (*http.Response, error) {
+	var reqBuffer bytes.Buffer
+	var reqReader io.Reader
+
 	start := time.Now()
 	lBody := []logger.Field{
 		{
@@ -125,30 +166,14 @@ func (h *HttpClient) Request(ctx context.Context, method, url string, headers ma
 		},
 	}
 
-	if h.reqResBodyLogging {
-		if request != nil {
-			bRequest, err := io.ReadAll(request)
-			if err != nil {
-				logger.Error(err.Error())
-			} else {
-				lBody = append(lBody, logger.Field{
-					Key:   "request",
-					Value: bRequest,
-				})
-			}
-		}
-
-		if headers != nil {
-			lBody = append(lBody, logger.Field{
-				Key:   "headers",
-				Value: headers,
-			})
-		}
+	if request != nil {
+		reader := io.TeeReader(request, &reqBuffer)
+		reqReader = reader
 	}
 
-	rBody, err := http.NewRequestWithContext(ctx, method, url, request)
+	rBody, err := http.NewRequestWithContext(ctx, method, url, reqReader)
 	if err != nil {
-		go h.errorLogging(method, url, start, err, lBody...)
+		h.errorLogging(method, url, reqReader, start, err, lBody...)
 		return nil, err
 	}
 
@@ -158,11 +183,11 @@ func (h *HttpClient) Request(ctx context.Context, method, url string, headers ma
 
 	response, err := h.client.Do(rBody)
 	if err != nil {
-		go h.errorLogging(method, url, start, err, lBody...)
+		h.errorLogging(method, url, &reqBuffer, start, err, lBody...)
 		return nil, err
 	}
 
-	go h.successLogging(method, url, response.Status, response.StatusCode, response.Body, start, lBody...)
+	h.successLogging(method, url, &reqBuffer, response.Status, response.StatusCode, response.Body, start, lBody...)
 
 	return response, nil
 }
