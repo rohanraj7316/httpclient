@@ -39,7 +39,7 @@ func (h *Handler) Get(ctx context.Context) {
 func (h *Handler) Post(ctx context.Context) {
 	url := "https://httpbin.org/anything"
 	header := map[string]string{
-		"content-type": "application/json",
+		"Content-Type": "application/json",
 	}
 
 	body := map[string]string{

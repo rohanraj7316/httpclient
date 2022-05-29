@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -108,6 +109,8 @@ func TestRequestLogging(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
+
+	time.Sleep(3 * time.Second)
 }
 
 func TestHttpPostMethod(t *testing.T) {
