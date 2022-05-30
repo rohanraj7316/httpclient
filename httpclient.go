@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"errors"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -97,7 +96,7 @@ func (h *HttpClient) Request(ctx context.Context, method, url string, headers ma
 
 	go h.successLogging(ctx, method, url, res.Status, res.StatusCode, reqByte, resByte, start)
 
-	return res, errors.New("error in testing")
+	return res, nil
 }
 
 // TODO: SOAP REQUEST
